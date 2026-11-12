@@ -1,7 +1,6 @@
 import {createSamplePhotos, prepareSamplePhotos} from './sample-photos.mjs';
 import { pickCriteria, selectionStory } from './pick-criteria.mjs';
 import { applyEntryTitle, applyEntryButton, applyEntryDescription } from './entry-copy.mjs?v=influencer-1-pet-3';
-import { makeZip } from './zip.mjs';
 import { albums, sampleAlbum, albumPhotos } from './album.mjs?v=daily-samples-1';
 import { comparisonCrop, comparisonFaces } from './comparison.mjs';
 import { decodeFile, detectFaces, mapLimited, MAX_FILES } from './photos.mjs';
@@ -474,6 +473,7 @@ function renderDone(){
   $('done-summary').textContent=`${plan.selected.length}장을 골랐어요. 다른 사진도 삭제하지 않고 이 체험 안에 따로 모았어요.`;
   $('chosen-grid').replaceChildren(...plan.selected.map(photo=>{const button=node('button');button.type='button';button.setAttribute('aria-label',`${photo.name} 확대`);const image=node('img');image.src=photo.preview;image.alt=photo.name;button.append(image);button.onclick=()=>openViewer(plan.selected,photo.id);return button;}));
   $('remember-choice').disabled=false;$('remember-choice').innerHTML=icon('heart')+'내 취향에 저장';
+  prepareShareFiles(plan.selected);
   show('done');
 }
 $('finish').onclick=()=>{if(!state.chosen.size)return;state.cleanup=new Set(state.photos.filter(p=>state.included.has(p.id)&&!state.chosen.has(p.id)).map(p=>p.id));state.candidates=[...state.chosen];renderDone();};$('back-to-results').onclick=()=>{show('result');renderResults();};
@@ -486,12 +486,24 @@ $('coming-sns').onclick=()=>window.open('https://www.instagram.com/','_blank','n
 $('connect-instagram').onclick=()=>$('instagram-dialog').showModal();
 $('close-instagram').onclick=()=>$('instagram-dialog').close();
 $('instagram-add-photos').onclick=()=>{$('instagram-dialog').close();$('taste-input').click();};
+// Save chosen photos through the phone's share sheet ("이미지 저장" puts them in the photo library).
+// Files are prepared when the done screen opens, so the tap can call share() right away (iOS needs that).
+let shareFiles=null,shareToken=0;
+async function prepareShareFiles(photos){
+ const token=++shareToken;shareFiles=null;
+ try{const files=await Promise.all(photos.map(async(p,i)=>{const blob=p.file||await(await fetch(p.originalUrl||p.preview)).blob();const type=blob.type||'image/jpeg';const ext=(p.name.match(/\.[a-z0-9]+$/i)?.[0])||(type==='image/png'?'.png':'.jpg');const base=p.name.replace(/\.[a-z0-9]+$/i,'').replace(/[\\/:*?"<>|]/g,'_');return new File([blob],`Goreun-${i+1}-${base}${ext}`,{type});}));if(token===shareToken)shareFiles=files;}
+ catch{if(token===shareToken)shareFiles=[];}
+}
+function downloadFiles(files){files.forEach((file,i)=>setTimeout(()=>{const url=URL.createObjectURL(file),link=document.createElement('a');link.href=url;link.download=file.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);},i*400));}
 $('download-selected').onclick=async()=>{
- const button=$('download-selected');button.disabled=true;
- try{const photos=state.photos.filter(p=>state.chosen.has(p.id));if(!photos.length)return;
- const entries=await Promise.all(photos.map(async(p,i)=>({path:`인스타에 올릴 사진/${i+1}-${p.name.replace(/[\\/:*?"<>|]/g,'_')}`,blob:p.file||await(await fetch(p.originalUrl||p.preview)).blob()})));
- const zip=await makeZip(entries),url=URL.createObjectURL(zip),link=document.createElement('a');link.href=url;link.download='Goreun-내가-고른-사진.zip';link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);toast('고른 사진을 ZIP 파일로 저장해요.');
- }catch{toast('사진을 저장하지 못했어요. 다시 시도해 주세요.');}finally{button.disabled=false;}
+ if(!shareFiles){toast('사진을 준비하고 있어요. 잠시 후 다시 눌러주세요.');return;}
+ if(!shareFiles.length){toast('사진을 준비하지 못했어요. 다시 시도해 주세요.');return;}
+ if(navigator.canShare?.({files:shareFiles})){
+  try{await navigator.share({files:shareFiles});}
+  catch(error){if(error.name!=='AbortError'){downloadFiles(shareFiles);toast('사진 파일로 저장해요.');}}
+  return;
+ }
+ downloadFiles(shareFiles);toast('사진 파일로 저장해요.');
 };
 $('new-session').onclick=()=>{refreshContext();renderGallery();show('home');};
 let pointerStart=null,lastTouchX=0,pinchDistance=0,pinchZoom=1;
